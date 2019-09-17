@@ -544,14 +544,14 @@ class RecordDataset:
         expand_rate = self.expand_rate
         debug = False
 
-        feat_dict = tf.parse_single_example(serial_example,features={
-                                            'img_raw' : tf.FixedLenFeature([], tf.string), \
-                                            'height'  : tf.FixedLenFeature([], tf.int64),  \
-                                            'width'   : tf.FixedLenFeature([], tf.int64),  \
-                                            'channel' : tf.FixedLenFeature([], tf.int64),  \
-                                            'img_path': tf.FixedLenFeature([], tf.string), \
-                                            'coord'   : tf.FixedLenFeature([], tf.string), \
-                                            'label'   : tf.FixedLenFeature([], tf.string)})
+        feat_dict = tf.io.parse_single_example(serial_example,features={
+                                            'img_raw' : tf.io.FixedLenFeature([], tf.string), \
+                                            'height'  : tf.io.FixedLenFeature([], tf.int64),  \
+                                            'width'   : tf.io.FixedLenFeature([], tf.int64),  \
+                                            'channel' : tf.io.FixedLenFeature([], tf.int64),  \
+                                            'img_path': tf.io.FixedLenFeature([], tf.string), \
+                                            'coord'   : tf.io.FixedLenFeature([], tf.string), \
+                                            'label'   : tf.io.FixedLenFeature([], tf.string)})
 
         img_raw = feat_dict['img_raw']
         height = feat_dict['height']
@@ -666,14 +666,14 @@ class RecordDataset:
         expand_rate = self.expand_rate
         debug = False
 
-        feat_dict = tf.parse_single_example(serial_example, features={
-            'img_raw': tf.FixedLenFeature([], tf.string),\
-            'height': tf.FixedLenFeature([], tf.int64),\
-            'width': tf.FixedLenFeature([], tf.int64),\
-            'channel': tf.FixedLenFeature([], tf.int64),\
-            'img_path': tf.FixedLenFeature([], tf.string),\
-            'coord': tf.FixedLenFeature([], tf.string),\
-            'label': tf.FixedLenFeature([], tf.string)})
+        feat_dict = tf.io.parse_single_example(serial_example, features={
+            'img_raw': tf.io.FixedLenFeature([], tf.string),\
+            'height': tf.io.FixedLenFeature([], tf.int64),\
+            'width': tf.io.FixedLenFeature([], tf.int64),\
+            'channel': tf.io.FixedLenFeature([], tf.int64),\
+            'img_path': tf.io.FixedLenFeature([], tf.string),\
+            'coord': tf.io.FixedLenFeature([], tf.string),\
+            'label': tf.io.FixedLenFeature([], tf.string)})
 
         img_raw = feat_dict['img_raw']
         height = feat_dict['height']
