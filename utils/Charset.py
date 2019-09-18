@@ -95,13 +95,13 @@ class Charset:
 
     def get_idxstr_by_charstr(self, charstr):
         if self.model_type in ('attention', ):
-            return self.get_idxstr_by_charstr_in_attention(charstr)
+            return self.get_idxstr_by_charstr_in_att(charstr)
         elif self.model_type in ('ctc', ):
             return self.get_idxstr_by_charstr_in_ctc(charstr)
         elif self.model_type in ('attention_ctc', 'ctc_attention'):
-            return self.get_idxstr_by_charstr_in_ctc(charstr), self.get_idxstr_by_charstr_in_attention(charstr)
+            return self.get_idxstr_by_charstr_in_ctc(charstr), self.get_idxstr_by_charstr_in_att(charstr)
 
-    def get_idxstr_by_charstr_in_attention(self, charstr):
+    def get_idxstr_by_charstr_in_att(self, charstr):
         id_list = [self.start_idx]
         charstr = q2b_function(charstr)
         for char in charstr:
@@ -130,6 +130,40 @@ class Charset:
         idstr = ','.join([str(id) for id in id_list])
         return idstr
 
+    def get_idxlist_by_charstr(self, charstr):
+        if self.model_type in ('attention', ):
+            return self.get_idxlist_by_charstr_in_att(charstr)
+        elif self.model_type in ('ctc', ):
+            return self.get_idxlist_by_charstr_in_ctc(charstr)
+        elif self.model_type in ('attention_ctc', 'ctc_attention'):
+            return self.get_idxlist_by_charstr_in_ctc(charstr), self.get_idxlist_by_charstr_in_att(charstr)
+
+    def get_idxlist_by_charstr_in_att(self, charstr):
+        id_list = [self.start_idx]
+        charstr = q2b_function(charstr)
+        for char in charstr:
+            if char not in self.char2idx:
+                if self.ignore_unk is False:
+                    char = self.unk_char
+                else:
+                    continue
+            id_list.append(self.char2idx[char])
+        id_list.append(self.end_idx)
+        return id_list
+
+    def get_idxlist_by_charstr_in_ctc(self, charstr):
+        id_list = []
+        charstr = q2b_function(charstr)
+        for char in charstr:
+            if char not in self.char2idx:
+                if self.ignore_unk is False:
+                    char = self.unk_char
+                else:
+                    continue
+            id_list.append(self.char2idx[char])
+
+        return id_list
+
     def get_charstr_by_idxlist(self, id_list):
         char_list = []
         for idx in id_list:
@@ -156,8 +190,10 @@ if __name__ == '__main__':
 
     char_count = charset.get_size()
     index_str = charset.get_idxstr_by_charstr("kindest")
+    index_lst = charset.get_idxlist_by_charstr("kindest")
     index_list = [int(x) for x in index_str.split(',')]
     char_str = charset.get_charstr_by_idxlist(index_list)
+    print(index_lst)
     print(char_count)
     print(index_list)
     print(char_str)
