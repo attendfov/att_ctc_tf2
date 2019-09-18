@@ -23,10 +23,10 @@ def coord_augmentation(tf_coord, width, height, lefoff=15, rigoff=15, upoff=5, d
     width = tf.cast(width, dtype=xmin.dtype)
     height = tf.cast(height, dtype=ymin.dtype)
 
-    xmin = xmin - tf.random_shuffle(tf.range(lefoff))[0]
-    ymin = ymin - tf.random_shuffle(tf.range(upoff))[0]
-    xmax = xmax + tf.random_shuffle(tf.range(rigoff))[0]
-    ymax = ymax + tf.random_shuffle(tf.range(downoff))[0]
+    xmin = xmin - tf.random.shuffle(tf.range(lefoff))[0]
+    ymin = ymin - tf.random.shuffle(tf.range(upoff))[0]
+    xmax = xmax + tf.random.shuffle(tf.range(rigoff))[0]
+    ymax = ymax + tf.random.shuffle(tf.range(downoff))[0]
 
     xmin = tf.minimum(tf.maximum(0, xmin), width)
     ymin = tf.minimum(tf.maximum(0, ymin), height)
@@ -119,13 +119,13 @@ def random_noise_static(image, noise_type):
         return image
 
     def random_normal_noise(image):
-        noise = tf.random_normal(tf.shape(image), mean=0.0, stddev=6.0)
+        noise = tf.random.normal(tf.shape(image), mean=0.0, stddev=6.0)
         image = tf.cast(image, dtype=tf.float32) + noise
         image = tf.clip_by_value(image, 0.0, 255.0)
         return tf.cast(image, dtype=tf.uint8)
 
     def random_uniform_noise(image):
-        noise = tf.random_uniform(tf.shape(image), minval=-6, maxval=6)
+        noise = tf.random.uniform(tf.shape(image), minval=-6, maxval=6)
         image = tf.cast(image, dtype=tf.float32) + noise
         image = tf.clip_by_value(image, 0.0, 255.0)
         return tf.cast(image, dtype=tf.uint8)
@@ -220,7 +220,7 @@ def augmentation_test(img_path):
         else:
             cv2.imshow('decode_image1', decode_image_np)
 
-        color_ordering = tf.random_shuffle(tf.range(6))
+        color_ordering = tf.random.shuffle(tf.range(6))
         print(color_ordering)
         color_ordering = int(color_ordering[0])
 
@@ -294,45 +294,45 @@ class FileDataset:
         field_delim = ' '
         use_quote_delim = False
         record_defaults = ['', '', '']
-        img_path, img_text, coord = tf.decode_csv(line, record_defaults, field_delim, use_quote_delim)
-        txt_index, txt_len = tf.py_func(self.get_idstr_by_charstr, [img_text], [tf.string, tf.int64])
-        txt_len = tf.to_int32(txt_len)
-        coord_val = tf.string_split([coord], ',').values
-        coord_val = tf.string_to_number(coord_val, out_type=tf.int32)
-        orig_img = tf.image.decode_image(tf.read_file(img_path))
+        img_path, img_text, coord = tf.io.decode_csv(line, record_defaults, field_delim, use_quote_delim)
+        txt_index, txt_len = tf.numpy_function(self.get_idstr_by_charstr, [img_text], [tf.string, tf.int64])
+        txt_len = tf.cast(txt_len, tf.int32)
+        coord_val = tf.strings.split([coord], ',').values
+        coord_val = tf.strings.to_number(coord_val, out_type=tf.int32)
+        orig_img = tf.image.decode_image(tf.io.read_file(img_path))
         img_shape = tf.shape(orig_img)
         width = img_shape[1]
         height = img_shape[0]
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         invert_flg = tf.logical_and(tf.greater(prob, 0.0), tf.equal(self.mode, 'train'))
         orig_img = tf.cond(invert_flg,
                            true_fn=lambda: tf.cast(255 - orig_img, dtype=tf.uint8),
                            false_fn=lambda: orig_img)
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         noise_flg = tf.logical_and(tf.greater(prob, 0.0), tf.equal(self.mode, 'train'))
-        noise_idx = tf.random_shuffle(tf.range(2))[0]
+        noise_idx = tf.random.shuffle(tf.range(2))[0]
         orig_img = tf.cond(noise_flg,
                            true_fn=lambda: random_noise_static(orig_img, noise_idx),
                            false_fn=lambda: random_noise_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         encode_flg = tf.logical_and(tf.greater(0.3, prob), tf.equal(self.mode, 'train'))
-        encode_idx = tf.random_shuffle(tf.range(4))[0]
+        encode_idx = tf.random.shuffle(tf.range(4))[0]
 
         orig_img = tf.cond(encode_flg,
                            true_fn=lambda: encode_decode_static(orig_img, encode_idx),
                            false_fn=lambda: encode_decode_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         color_flg = tf.logical_and(tf.greater(prob, 0), tf.equal(self.mode, 'train'))
-        color_idx = tf.random_shuffle(tf.range(6))[0]
+        color_idx = tf.random.shuffle(tf.range(6))[0]
         orig_img = tf.cond(color_flg,
                            true_fn=lambda: distort_color_static(orig_img, color_idx),
                            false_fn=lambda: distort_color_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         coord_flg = tf.logical_and(tf.greater(prob, 0), tf.equal(self.mode, 'train'))
         coord_val1 = tf.cond(coord_flg,
                              true_fn=lambda: coord_augmentation(coord_val, width, height),
@@ -344,9 +344,9 @@ class FileDataset:
         target_h = coord_val1[3] - coord_val1[1]
         crop_img = tf.image.crop_to_bounding_box(orig_img, offset_h, offset_w, target_h, target_w)
 
-        ratio = tf.to_float(norm_h / tf.to_float(target_h))
-        norm_w = tf.to_int32(tf.to_float(target_w) * expand_rate * ratio)
-        norm_img = tf.image.resize_images(crop_img, (norm_h, norm_w))
+        ratio = tf.cast(norm_h, tf.float32) / tf.cast(target_h, tf.float32)
+        norm_w = tf.cast(tf.cast(target_w, tf.float32) * expand_rate * ratio, tf.int32)
+        norm_img = tf.image.resize(crop_img, (norm_h, norm_w))
         if debug:
             norm_img = tf.cast(norm_img, tf.uint8)
         else:
@@ -376,8 +376,8 @@ class FileDataset:
         dataset = dataset.map(map_func=self.parse_example, num_parallel_calls=self.num_parallel)
         dataset = dataset.filter(self.filter)
         dataset = dataset.shuffle(self.BUFFER_SIZE).padded_batch(self.batch_size, padded_shapes, padding_values)
-        dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
-        # dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+        #dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
+        dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
         return dataset
 
     def parse_example_ctc_attention(self, line):
@@ -387,48 +387,48 @@ class FileDataset:
         field_delim = ' '
         use_quote_delim = False
         record_defaults = ['', '', '']
-        img_path, img_text, coord = tf.decode_csv(line, record_defaults, field_delim, use_quote_delim)
-        ctc_idx, ctc_len,  att_idx, att_len = tf.py_func(self.get_idstr_by_charstr,
+        img_path, img_text, coord = tf.io.decode_csv(line, record_defaults, field_delim, use_quote_delim)
+        ctc_idx, ctc_len,  att_idx, att_len = tf.numpy_function(self.get_idstr_by_charstr,
                                                          [img_text],
                                                          [tf.string, tf.int64, tf.string, tf.int64])
-        ctc_len = tf.to_int32(ctc_len)
-        att_len = tf.to_int32(att_len)
-        coord_val = tf.string_split([coord], ',').values
-        coord_val = tf.string_to_number(coord_val, out_type=tf.int32)
-        orig_img = tf.image.decode_image(tf.read_file(img_path))
+        ctc_len = tf.cast(ctc_len, tf.int32)
+        att_len = tf.cast(att_len, tf.int32)
+        coord_val = tf.strings.split([coord], ',').values
+        coord_val = tf.strings.to_number(coord_val, out_type=tf.int32)
+        orig_img = tf.image.decode_image(tf.io.read_file(img_path))
         img_shape = tf.shape(orig_img)
         width = img_shape[1]
         height = img_shape[0]
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         invert_flg = tf.logical_and(tf.greater(prob, 0.0), tf.equal(self.mode, 'train'))
         orig_img = tf.cond(invert_flg,
                            true_fn=lambda: tf.cast(255 - orig_img, dtype=tf.uint8),
                            false_fn=lambda: orig_img)
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         noise_flg = tf.logical_and(tf.greater(prob, 0.0), tf.equal(self.mode, 'train'))
-        noise_idx = tf.random_shuffle(tf.range(2))[0]
+        noise_idx = tf.random.shuffle(tf.range(2))[0]
         orig_img = tf.cond(noise_flg,
                            true_fn=lambda: random_noise_static(orig_img, noise_idx),
                            false_fn=lambda: random_noise_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         encode_flg = tf.logical_and(tf.greater(0.3, prob), tf.equal(self.mode, 'train'))
-        encode_idx = tf.random_shuffle(tf.range(4))[0]
+        encode_idx = tf.random.shuffle(tf.range(4))[0]
 
         orig_img = tf.cond(encode_flg,
                            true_fn=lambda: encode_decode_static(orig_img, encode_idx),
                            false_fn=lambda: encode_decode_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         color_flg = tf.logical_and(tf.greater(prob, 0), tf.equal(self.mode, 'train'))
-        color_idx = tf.random_shuffle(tf.range(6))[0]
+        color_idx = tf.random.shuffle(tf.range(6))[0]
         orig_img = tf.cond(color_flg,
                            true_fn=lambda: distort_color_static(orig_img, color_idx),
                            false_fn=lambda: distort_color_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         coord_flg = tf.logical_and(tf.greater(prob, 0), tf.equal(self.mode, 'train'))
         coord_val1 = tf.cond(coord_flg,
                              true_fn=lambda: coord_augmentation(coord_val, width, height),
@@ -440,9 +440,9 @@ class FileDataset:
         target_h = coord_val1[3] - coord_val1[1]
         crop_img = tf.image.crop_to_bounding_box(orig_img, offset_h, offset_w, target_h, target_w)
 
-        ratio = tf.to_float(norm_h / tf.to_float(target_h))
-        norm_w = tf.to_int32(tf.to_float(target_w) * expand_rate * ratio)
-        norm_img = tf.image.resize_images(crop_img, (norm_h, norm_w))
+        ratio = tf.cast(norm_h, tf.float32) / tf.cast(target_h, tf.float32)
+        norm_w = tf.cast(tf.cast(target_w, tf.float32) * expand_rate * ratio, tf.int32)
+        norm_img = tf.image.resize(crop_img, (norm_h, norm_w))
         if debug:
             norm_img = tf.cast(norm_img, tf.uint8)
         else:
@@ -476,8 +476,8 @@ class FileDataset:
         dataset = dataset.map(map_func=self.parse_example_ctc_attention, num_parallel_calls=self.num_parallel)
         dataset = dataset.filter(self.filter_ctc_attention)
         dataset = dataset.shuffle(self.BUFFER_SIZE).padded_batch(self.batch_size, padded_shapes, padding_values)
-        dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
-        # dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+        #dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
+        dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
         return dataset
 
 
@@ -561,44 +561,44 @@ class RecordDataset:
         coord = feat_dict['coord']
         img_text = feat_dict['label']
 
-        txt_index, txt_len = tf.py_func(self.get_idstr_by_charstr, [img_text], [tf.string, tf.int64])
-        txt_len = tf.to_int32(txt_len)
+        txt_index, txt_len = tf.numpy_function(self.get_idstr_by_charstr, [img_text], [tf.string, tf.int64])
+        txt_len = tf.cast(txt_len, tf.int32)
 
-        coord_val = tf.string_split([coord], ',').values
-        coord_val = tf.string_to_number(coord_val, out_type=tf.int32)
+        coord_val = tf.strings.split([coord], ',').values
+        coord_val = tf.strings.to_number(coord_val, out_type=tf.int32)
 
-        img_raw = tf.decode_raw(img_raw, tf.uint8)
+        img_raw = tf.io.decode_raw(img_raw, tf.uint8)
         orig_img = tf.reshape(img_raw, (height, width, channel))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         invert_flg = tf.logical_and(tf.greater(prob, 0.75), tf.equal(self.mode, 'train'))
         orig_img = tf.cond(invert_flg,
                            true_fn=lambda: tf.cast(255-orig_img, dtype=tf.uint8),
                            false_fn=lambda: orig_img)
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         noise_flg = tf.logical_and(tf.greater(prob, 0.75), tf.equal(self.mode, 'train'))
-        noise_idx = tf.random_shuffle(tf.range(2))[0]
+        noise_idx = tf.random.shuffle(tf.range(2))[0]
         orig_img = tf.cond(noise_flg,
                            true_fn=lambda: random_noise_static(orig_img, noise_idx),
                            false_fn=lambda: random_noise_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         encode_flg = tf.logical_and(tf.greater(prob, 0.75), tf.equal(self.mode, 'train'))
-        encode_idx = tf.random_shuffle(tf.range(4))[0]
+        encode_idx = tf.random.shuffle(tf.range(4))[0]
 
         orig_img = tf.cond(encode_flg,
                            true_fn=lambda: encode_decode_static(orig_img, encode_idx),
                            false_fn=lambda: encode_decode_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         color_flg = tf.logical_and(tf.greater(prob, 0.75), tf.equal(self.mode, 'train'))
-        color_idx = tf.random_shuffle(tf.range(6))[0]
+        color_idx = tf.random.shuffle(tf.range(6))[0]
         orig_img = tf.cond(color_flg,
                            true_fn=lambda: distort_color_static(orig_img, color_idx),
                            false_fn=lambda: distort_color_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         coord_flg = tf.logical_and(tf.greater(prob, 0.4), tf.equal(self.mode, 'train'))
         coord_val1 = tf.cond(coord_flg,
                              true_fn=lambda: coord_augmentation(coord_val, width, height),
@@ -610,15 +610,15 @@ class RecordDataset:
         target_h = coord_val1[3] - coord_val1[1]
         crop_img = tf.image.crop_to_bounding_box(orig_img, offset_h, offset_w, target_h, target_w)
 
-        ratio = tf.to_float(norm_h / tf.to_float(target_h))
-        norm_w = tf.to_int32(tf.to_float(target_w) * expand_rate * ratio)
-        norm_img = tf.image.resize_images(crop_img, (norm_h, norm_w))
+        ratio = tf.cast(norm_h, tf.float32) / tf.cast(target_h, tf.float32)
+        norm_w = tf.cast(tf.cast(target_w, tf.float32) * expand_rate * ratio, tf.int32)
+        norm_img = tf.image.resize(crop_img, (norm_h, norm_w))
 
         if debug:
             norm_img = tf.cast(norm_img, tf.uint8)
         else:
             # convert RGB-->BGR
-            mean = [102.9801, 115.9465, 122.7717]
+            mean = [127.5, 127.5, 127.5]
             norm_img = norm_img[:, :, ::-1]
             norm_img = norm_img - mean
         return img_path, norm_img, img_text, txt_index, txt_len, coord, norm_w
@@ -657,8 +657,8 @@ class RecordDataset:
         dataset = dataset.map(map_func=self.parse_example, num_parallel_calls=self.num_parallel)
         dataset = dataset.filter(self.filter)
         dataset = dataset.shuffle(self.BUFFER_SIZE).padded_batch(self.batch_size, padded_shapes, padding_values)
-        dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
-        #dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+        #dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
+        dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
         return dataset
 
     def parse_example_ctc_attention(self, serial_example):
@@ -682,47 +682,47 @@ class RecordDataset:
         img_path = feat_dict['img_path']
         coord = feat_dict['coord']
         img_text = feat_dict['label']
-        ctc_idx, ctc_len, att_idx, att_len = tf.py_func(self.get_idstr_by_charstr,
+        ctc_idx, ctc_len, att_idx, att_len = tf.numpy_function(self.get_idstr_by_charstr,
                                                         [img_text],
                                                         [tf.string, tf.int64, tf.string, tf.int64])
-        ctc_len = tf.to_int32(ctc_len)
-        att_len = tf.to_int32(att_len)
+        ctc_len = tf.cast(ctc_len, tf.int32)
+        att_len = tf.cast(att_len, tf.int32)
 
-        coord_val = tf.string_split([coord], ',').values
-        coord_val = tf.string_to_number(coord_val, out_type=tf.int32)
+        coord_val = tf.strings.split([coord], ',').values
+        coord_val = tf.strings.to_number(coord_val, out_type=tf.int32)
 
-        img_raw = tf.decode_raw(img_raw, tf.uint8)
+        img_raw = tf.io.decode_raw(img_raw, tf.uint8)
         orig_img = tf.reshape(img_raw, (height, width, channel))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         invert_flg = tf.logical_and(tf.greater(prob, 0.75), tf.equal(self.mode, 'train'))
         orig_img = tf.cond(invert_flg,
                            true_fn=lambda: tf.cast(255 - orig_img, dtype=tf.uint8),
                            false_fn=lambda: orig_img)
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         noise_flg = tf.logical_and(tf.greater(prob, 0.75), tf.equal(self.mode, 'train'))
-        noise_idx = tf.random_shuffle(tf.range(2))[0]
+        noise_idx = tf.random.shuffle(tf.range(2))[0]
         orig_img = tf.cond(noise_flg,
                            true_fn=lambda: random_noise_static(orig_img, noise_idx),
                            false_fn=lambda: random_noise_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         encode_flg = tf.logical_and(tf.greater(prob, 0.75), tf.equal(self.mode, 'train'))
-        encode_idx = tf.random_shuffle(tf.range(4))[0]
+        encode_idx = tf.random.shuffle(tf.range(4))[0]
 
         orig_img = tf.cond(encode_flg,
                            true_fn=lambda: encode_decode_static(orig_img, encode_idx),
                            false_fn=lambda: encode_decode_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         color_flg = tf.logical_and(tf.greater(prob, 0.75), tf.equal(self.mode, 'train'))
-        color_idx = tf.random_shuffle(tf.range(6))[0]
+        color_idx = tf.random.shuffle(tf.range(6))[0]
         orig_img = tf.cond(color_flg,
                            true_fn=lambda: distort_color_static(orig_img, color_idx),
                            false_fn=lambda: distort_color_static(orig_img, -1))
 
-        prob = tf.random_uniform([])
+        prob = tf.random.uniform([])
         coord_flg = tf.logical_and(tf.greater(prob, 0.4), tf.equal(self.mode, 'train'))
         coord_val1 = tf.cond(coord_flg,
                              true_fn=lambda: coord_augmentation(coord_val, width, height),
@@ -734,9 +734,9 @@ class RecordDataset:
         target_h = coord_val1[3] - coord_val1[1]
         crop_img = tf.image.crop_to_bounding_box(orig_img, offset_h, offset_w, target_h, target_w)
 
-        ratio = tf.to_float(norm_h / tf.to_float(target_h))
-        norm_w = tf.to_int32(tf.to_float(target_w) * expand_rate * ratio)
-        norm_img = tf.image.resize_images(crop_img, (norm_h, norm_w))
+        ratio = tf.cast(norm_h, tf.float32) / tf.cast(target_h, tf.float32)
+        norm_w = tf.cast(tf.cast(target_w, tf.float32) * expand_rate * ratio, tf.int32)
+        norm_img = tf.image.resize(crop_img, (norm_h, norm_w))
 
         if debug:
             norm_img = tf.cast(norm_img, tf.uint8)
@@ -773,14 +773,13 @@ class RecordDataset:
         dataset = dataset.map(map_func=self.parse_example_ctc_attention, num_parallel_calls=self.num_parallel)
         dataset = dataset.filter(self.filter_ctc_attention)
         dataset = dataset.shuffle(self.BUFFER_SIZE).padded_batch(self.batch_size, padded_shapes, padding_values)
-        dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
-        # dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+        #dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
+        dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
         return dataset
 
 
 
 def FileDatasetTestSoloModel():
-    tf.enable_eager_execution()
     configs = {}
     configs['norm_h'] = 32
     configs['expand_rate'] = 1.0
@@ -820,7 +819,6 @@ def FileDatasetTestSoloModel():
 
 
 def FileDatasetTestJoinModel():
-    tf.enable_eager_execution()
     configs = {}
     configs['norm_h'] = 32
     configs['expand_rate'] = 1.0
@@ -901,7 +899,6 @@ def RecordDatasetTestSoloModel():
 
 
 def RecordDatasetTestJoinModel():
-    tf.enable_eager_execution()
     configs = {}
     configs['norm_h'] = 32
     configs['expand_rate'] = 1.0
@@ -951,8 +948,8 @@ if __name__ == '__main__':
     #augmentation_test(img_path)
     #FileDatasetTestSoloModel()
     #FileDatasetTestJoinModel()
-    RecordDatasetTestSoloModel()
-    #RecordDatasetTestJoinModel()
+    #RecordDatasetTestSoloModel()
+    RecordDatasetTestJoinModel()
 
 
 
