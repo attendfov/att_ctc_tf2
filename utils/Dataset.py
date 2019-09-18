@@ -273,18 +273,18 @@ class FileDataset:
         assert(isinstance(file_list, (list, tuple)))
         self.file_list = [file for file in file_list if os.path.isfile(file) and os.path.getsize(file)>0]
 
-    def get_idstr_by_charstr(self, charstr):
+    def get_idlst_by_charstr(self, charstr):
         if isinstance(charstr, bytes):
             charstr = charstr.decode('utf-8')
 
         if self.model_type in ('ctc', 'attention'):
-            idxstr = self.charset.get_idxstr_by_charstr(charstr)
-            idxlen = len(idxstr.split(','))
+            idxstr = self.charset.get_idxlist_by_charstr(charstr)
+            idxlen = len(idxstr)
             return idxstr, idxlen
         elif self.model_type in ('ctc_attention', 'attention_ctc'):
-            ctcidx, attidx = self.charset.get_idxstr_by_charstr(charstr)
-            ctclen = len(ctcidx.split(','))
-            attlen = len(attidx.split(','))
+            ctcidx, attidx = self.charset.get_idxlist_by_charstr(charstr)
+            ctclen = len(ctcidx)
+            attlen = len(attidx)
             return ctcidx, ctclen, attidx, attlen
 
     def parse_example(self, line):
@@ -295,7 +295,8 @@ class FileDataset:
         use_quote_delim = False
         record_defaults = ['', '', '']
         img_path, img_text, coord = tf.io.decode_csv(line, record_defaults, field_delim, use_quote_delim)
-        txt_index, txt_len = tf.numpy_function(self.get_idstr_by_charstr, [img_text], [tf.string, tf.int64])
+        txt_index, txt_len = tf.numpy_function(self.get_idlst_by_charstr, [img_text], [tf.int64, tf.int64])
+        txt_index = tf.cast(tf.reshape(txt_index, [-1]), tf.int32)
         txt_len = tf.cast(txt_len, tf.int32)
         coord_val = tf.strings.split([coord], ',').values
         coord_val = tf.strings.to_number(coord_val, out_type=tf.int32)
@@ -364,8 +365,9 @@ class FileDataset:
         return tf.logical_and(txt_len_logical, img_len_logical)
 
     def data_reader(self, repeat=0):
-        padded_shapes = ([], [self.norm_h, None, 3], [], [], [], [], [])
-        padding_values = ('', 0.0, '', '', 0, '', 0)
+        eos_idx = self.charset.get_eosid()
+        padded_shapes = ([], [self.norm_h, None, 3], [], [None], [], [], [])
+        padding_values = ('', 0.0, '', eos_idx, 0, '', 0)
 
         dataset = tf.data.TextLineDataset(self.file_list)
         if repeat != 0:
@@ -388,9 +390,11 @@ class FileDataset:
         use_quote_delim = False
         record_defaults = ['', '', '']
         img_path, img_text, coord = tf.io.decode_csv(line, record_defaults, field_delim, use_quote_delim)
-        ctc_idx, ctc_len,  att_idx, att_len = tf.numpy_function(self.get_idstr_by_charstr,
-                                                         [img_text],
-                                                         [tf.string, tf.int64, tf.string, tf.int64])
+        ctc_idx, ctc_len,  att_idx, att_len = tf.numpy_function(self.get_idlst_by_charstr,
+                                                                [img_text],
+                                                                [tf.int64, tf.int64, tf.int64, tf.int64])
+        ctc_idx = tf.cast(tf.reshape(ctc_idx, [-1]), tf.int32)
+        att_idx = tf.cast(tf.reshape(att_idx, [-1]), tf.int32)
         ctc_len = tf.cast(ctc_len, tf.int32)
         att_len = tf.cast(att_len, tf.int32)
         coord_val = tf.strings.split([coord], ',').values
@@ -464,8 +468,9 @@ class FileDataset:
         return tf.logical_and(txt_len_logical, img_len_logical)
 
     def data_reader_ctc_attention(self, repeat=0):
-        padded_shapes = ([], [self.norm_h, None, 3], [], [], [], [], [], [], [])
-        padding_values = ('', 0.0, '', '', 0, '', 0, '', 0)
+        eos_idx = self.charset.get_eosid()
+        padded_shapes = ([], [self.norm_h, None, 3], [], [None], [], [None], [], [], [])
+        padding_values = ('', 0.0, '', eos_idx, 0, eos_idx, 0, '', 0)
 
         dataset = tf.data.TextLineDataset(self.file_list)
         if repeat != 0:
@@ -525,18 +530,18 @@ class RecordDataset:
         assert(isinstance(file_list, (list, tuple)))
         self.file_list = [file for file in file_list if os.path.isfile(file) and os.path.getsize(file)>0]
 
-    def get_idstr_by_charstr(self, charstr):
+    def get_idlst_by_charstr(self, charstr):
         if isinstance(charstr, bytes):
             charstr = charstr.decode('utf-8')
 
         if self.model_type in ('ctc', 'attention'):
-            idxstr = self.charset.get_idxstr_by_charstr(charstr)
-            idxlen = len(idxstr.split(','))
+            idxstr = self.charset.get_idxlist_by_charstr(charstr)
+            idxlen = len(idxstr)
             return idxstr, idxlen
         elif self.model_type in ('ctc_attention', 'attention_ctc'):
-            ctcidx, attidx = self.charset.get_idxstr_by_charstr(charstr)
-            ctclen = len(ctcidx.split(','))
-            attlen = len(attidx.split(','))
+            ctcidx, attidx = self.charset.get_idxlist_by_charstr(charstr)
+            ctclen = len(ctcidx)
+            attlen = len(attidx)
             return ctcidx, ctclen, attidx, attlen
 
     def parse_example(self, serial_example):
@@ -561,7 +566,8 @@ class RecordDataset:
         coord = feat_dict['coord']
         img_text = feat_dict['label']
 
-        txt_index, txt_len = tf.numpy_function(self.get_idstr_by_charstr, [img_text], [tf.string, tf.int64])
+        txt_index, txt_len = tf.numpy_function(self.get_idlst_by_charstr, [img_text], [tf.int64, tf.int64])
+        txt_index = tf.cast(tf.reshape(txt_index, [-1]), tf.int32)
         txt_len = tf.cast(txt_len, tf.int32)
 
         coord_val = tf.strings.split([coord], ',').values
@@ -643,8 +649,9 @@ class RecordDataset:
         return dataset
 
     def data_reader(self, repeat=0):
-        padded_shapes = ([], [self.norm_h, None, 3], [], [], [], [], [])
-        padding_values = ('', 0.0, '', '', 0, '', 0)
+        eos_idx = self.charset.get_eosid()
+        padded_shapes = ([], [self.norm_h, None, 3], [], [None], [], [], [])
+        padding_values = ('', 0.0, '', eos_idx, 0, '', 0)
         fileset = tf.data.Dataset.list_files(self.file_list)
         dataset = fileset.apply(
                     tf.data.experimental.parallel_interleave(
@@ -682,9 +689,11 @@ class RecordDataset:
         img_path = feat_dict['img_path']
         coord = feat_dict['coord']
         img_text = feat_dict['label']
-        ctc_idx, ctc_len, att_idx, att_len = tf.numpy_function(self.get_idstr_by_charstr,
-                                                        [img_text],
-                                                        [tf.string, tf.int64, tf.string, tf.int64])
+        ctc_idx, ctc_len, att_idx, att_len = tf.numpy_function(self.get_idlst_by_charstr,
+                                                               [img_text],
+                                                               [tf.int64, tf.int64, tf.int64, tf.int64])
+        ctc_idx = tf.cast(tf.reshape(ctc_idx, [-1]), tf.int32)
+        att_idx = tf.cast(tf.reshape(att_idx, [-1]), tf.int32)
         ctc_len = tf.cast(ctc_len, tf.int32)
         att_len = tf.cast(att_len, tf.int32)
 
@@ -758,8 +767,9 @@ class RecordDataset:
         return tf.logical_and(txt_len_logical, img_len_logical)
 
     def data_reader_ctc_attention(self, repeat=0):
-        padded_shapes = ([], [self.norm_h, None, 3], [], [], [], [], [], [], [])
-        padding_values = ('', 0.0, '', '', 0, '', 0, '', 0)
+        eos_idx = self.charset.get_eosid()
+        padded_shapes = ([], [self.norm_h, None, 3], [], [None], [], [None], [], [], [])
+        padding_values = ('', 0.0, '', eos_idx, 0, eos_idx, 0, '', 0)
 
         fileset = tf.data.Dataset.list_files(self.file_list)
         dataset = fileset.apply(
@@ -911,11 +921,6 @@ def RecordDatasetTestJoinModel():
 
 
     dataset = RecordDataset(configs)
-
-    tt = dataset.get_idstr_by_charstr('123467HIJG')
-
-    print(tt)
-
     dataset = dataset.data_reader_ctc_attention()
 
     for line in dataset:
@@ -947,9 +952,9 @@ def RecordDatasetTestJoinModel():
 if __name__ == '__main__':
     #augmentation_test(img_path)
     #FileDatasetTestSoloModel()
-    #FileDatasetTestJoinModel()
+    FileDatasetTestJoinModel()
     #RecordDatasetTestSoloModel()
-    RecordDatasetTestJoinModel()
+    #RecordDatasetTestJoinModel()
 
 
 
