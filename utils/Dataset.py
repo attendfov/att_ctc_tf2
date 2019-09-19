@@ -626,7 +626,7 @@ class RecordDataset:
             # convert RGB-->BGR
             mean = [127.5, 127.5, 127.5]
             norm_img = norm_img[:, :, ::-1]
-            norm_img = norm_img - mean
+            norm_img = (norm_img - mean)/127.5
         return img_path, norm_img, img_text, txt_index, txt_len, coord, norm_w
 
     def filter(self, img_path, norm_img, img_text, txt_index, txt_len, coord, norm_w):
@@ -753,7 +753,7 @@ class RecordDataset:
             # convert RGB-->BGR
             mean = [127.5, 127.5, 127.5]
             norm_img = norm_img[:, :, ::-1]
-            norm_img = norm_img - mean
+            norm_img = (norm_img - mean)/127.5
         return img_path, norm_img, img_text, ctc_idx, ctc_len, att_idx, att_len, coord, norm_w
 
     def filter_ctc_attention(self, img_path, norm_img, img_text, ctc_idx, ctc_len, att_idx, att_len, coord, norm_w):
