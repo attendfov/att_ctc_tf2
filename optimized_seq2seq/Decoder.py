@@ -10,7 +10,6 @@ import random
 import numpy as np
 import tensorflow as tf
 layers = tf.keras.layers
-tf.enable_eager_execution()
 
 print(tf.__version__)
 
@@ -63,17 +62,24 @@ class Decoder(tf.keras.Model):
         elif self.attention_name.lower() == 'bahdanau':
             self.att_step_func = self.bahdanau_att_step
 
-        assert (rnn_type in ('rnn', 'lstm', 'gru'))
-
-        if rnn_type == 'rnn':
-            rnn_class = tf.nn.rnn_cell.RNNCell
-        elif rnn_type == 'lstm':
-            rnn_class = tf.nn.rnn_cell.LSTMCell
-        elif rnn_type == 'gru':
-            rnn_class = tf.nn.rnn_cell.GRUCell
-
         rnn_fw_name = 'decode_rnn_fw'
-        self.rnn_cell = rnn_class(num_units=self.dec_units, dtype=tf.float32, name=rnn_fw_name)
+        assert (rnn_type in ('rnn', 'lstm', 'gru'))
+        if rnn_type == 'rnn':
+            self.rnn_cell = tf.keras.layers.SimpleRNN(units=self.dec_units,
+                                                      return_sequences=True,
+                                                      return_state=True,
+                                                      name=rnn_fw_name)
+        elif rnn_type == 'lstm':
+            self.rnn_cell = tf.keras.layers.LSTM(units=self.dec_units,
+                                                 return_sequences=True,
+                                                 return_state=True,
+                                                 name=rnn_fw_name)
+        elif rnn_type == 'gru':
+            self.rnn_cell = tf.keras.layers.GRU(units=self.dec_units,
+                                                return_sequences=True,
+                                                return_state=True,
+                                                name=rnn_fw_name)
+
         self.embedding = tf.keras.layers.Embedding(vocab_size, embedding_dim)
         self.fc = tf.keras.layers.Dense(vocab_size)
 
@@ -81,39 +87,6 @@ class Decoder(tf.keras.Model):
         self.enc_W = tf.keras.layers.Dense(self.enc_units)
         self.dec_W = tf.keras.layers.Dense(self.dec_units)
         self.V = tf.keras.layers.Dense(1)
-
-    def decode_bk(self,
-               step_id,
-               step_output,
-               step_attention,
-               decoder_outputs,
-               decoder_argmaxs,
-               decoder_attentions,
-               decoder_lengths
-               ):
-
-        decoder_dict = {}
-        assert (isinstance(decoder_outputs, (list, np.ndarray)))
-        assert (isinstance(decoder_argmaxs, (list, np.ndarray)))
-        assert (isinstance(decoder_lengths, (list, np.ndarray)))
-        assert (isinstance(decoder_attentions, list))
-        assert (len(decoder_outputs) == len(decoder_argmaxs))
-        assert (len(decoder_attentions) == len(decoder_argmaxs))
-        step_argmax = tf.argmax(step_output, 1)
-        decoder_outputs.append(step_output)
-        decoder_attentions.append(tf.squeeze(step_attention, axis=2))
-        decoder_argmaxs.append(step_argmax)
-
-        batchs_eos = tf.equal(step_argmax, self.EOS_ID).numpy()
-        update_idx = ((decoder_lengths > step_id) & batchs_eos) != 0
-        decoder_lengths[update_idx] = len(decoder_argmaxs)
-
-        decoder_dict[self.DEC_OUTPUTS] = decoder_outputs
-        decoder_dict[self.DEC_ARGMAXS] = decoder_argmaxs
-        decoder_dict[self.DEC_LENGTHS] = decoder_lengths
-        decoder_dict[self.DEC_ATTENTIONS] = decoder_attentions
-
-        return step_argmax, decoder_dict
 
     def decode(self,
                step_id,
@@ -176,8 +149,7 @@ class Decoder(tf.keras.Model):
         step_rnn_input = step_embed
         if self.latent_language:
             step_rnn_input = tf.concat([step_embed, dec_hidden], axis=1)
-        step_rnn_input = tf.squeeze(input=step_rnn_input, axis=1)
-        step_rnn_output, dec_hidden = self.rnn_cell(step_rnn_input, dec_hidden)
+        step_rnn_output, dec_hidden = self.rnn_cell(inputs=step_rnn_input, initial_state=dec_hidden)
 
         logger.debug("decode rnn step output shape: {}".format(step_rnn_output.shape))
         logger.debug("decode rnn step hidden shape: {}".format(dec_hidden.shape))
@@ -228,7 +200,6 @@ class Decoder(tf.keras.Model):
         '''
 
         logger.debug("step_input shape: {}".format(step_input.shape))
-        logger.debug("dec_hidden shape: {}".format(dec_hidden.shape))
         logger.debug("enc_output shape: {}".format(enc_output.shape))
 
         #batch-->batch x 1
@@ -241,12 +212,10 @@ class Decoder(tf.keras.Model):
         step_rnn_input = step_embed
         if self.latent_language:
             step_rnn_input = tf.concat([step_embed, dec_hidden], axis=1)
-        step_rnn_input = tf.squeeze(input=step_rnn_input, axis=1)
-        step_rnn_output, dec_hidden = self.rnn_cell(step_rnn_input, dec_hidden)
+        step_rnn_output, dec_hidden = self.rnn_cell(inputs=step_rnn_input, initial_state=dec_hidden)
         logger.debug("decode rnn step output shape: {}".format(step_rnn_output.shape))
         logger.debug("decode rnn step hidden shape: {}".format(dec_hidden.shape))
 
-        step_rnn_output = tf.expand_dims(step_rnn_output, axis=1)
         step_input_feat = self.dec_W(step_rnn_output)
         enc_output_feat = enc_output
         logger.debug("step_input_feat shape: {}".format(step_input_feat.shape))
@@ -269,8 +238,6 @@ class Decoder(tf.keras.Model):
             step_cnt = enc_output.shape[1]
             step_input_feat = tf.tile(step_input_feat, [1, step_cnt, 1])
             score = self.V(tf.tanh(tf.concat([step_input_feat, enc_output_feat], axis=2)))
-        elif self.attention_type == 4:
-            pass
 
         logger.debug("score shape: {}".format(score.shape))
         # adding weight mask
@@ -314,11 +281,11 @@ class Decoder(tf.keras.Model):
 
         enc_output_feat = self.enc_W(enc_output)
         step_input = tf.convert_to_tensor([self.SOS_ID] * batch_size)
-        decoder_hidden = self.rnn_cell.zero_state(batch_size, dtype=tf.float32)
+        decoder_hidden = None
 
         use_teacher_forcing = False
-        if training and random.random() < teacher_forcing_ratio:
-            use_teacher_forcing = True
+        #if training and random.random() < teacher_forcing_ratio:
+        #    use_teacher_forcing = True
 
         if use_teacher_forcing:
             for step in range(1, decoder_steps):

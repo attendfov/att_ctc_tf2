@@ -8,13 +8,9 @@ import os
 import io
 import cv2
 import sys
-import time
-import shutil
 import numpy as np
 import tensorflow as tf
-import Levenshtein
 
-tf.enable_eager_execution()
 
 if sys.version.startswith('2'):
     reload(sys)
@@ -89,7 +85,7 @@ class Solover:
         #charset parse
         self.char_dict = config['char_dict']
         self.charset = Charset(self.char_dict)
-        self.step_counter = tf.train.get_or_create_global_step()
+        self.step_counter = tf.Variable(tf.constant(0), trainable=False, name='step_counter')
 
         self.decoder_dict = {}
         self.loss_value = 0.0
@@ -102,6 +98,7 @@ class Solover:
         if 'learning_rate_decay' in config:
             self.learning_rate_decay = config['learning_rate_decay']
 
+        '''
         if self.learning_rate_decay == 'piecewise_constant':
             boundaries = [30000, 60000]
             values = [self.learning_rate, self.learning_rate*0.5, self.learning_rate*0.2]
@@ -118,6 +115,7 @@ class Solover:
             self.learning_rate = tf.train.linear_cosine_decay(self.learning_rate,
                                                               self.step_counter,
                                                               decay_steps)
+        '''
 
         if 'eval_interval' in config:
             self.eval_interval = int(config['eval_interval'])
@@ -147,19 +145,19 @@ class Solover:
                          rnn_type='gru',
                          max_length=self.max_padding)
 
-        self.optimizer_type = 'adam'
+        self.optimizer_type = 'sgd'
         if 'optimizer_type' in config:
             self.optimizer_type = config['optimizer_type']
         if self.optimizer_type not in ('sgd', 'momentum', 'adam'):
             print("Solover Error: optimizer_type {} not in [sgd, momentum, adam]".format(self.optimizer_type))
 
-        self.optimizer = tf.train.AdamOptimizer(self.learning_rate)
+        self.optimizer = tf.keras.optimizers.Adam(self.learning_rate)
         if self.optimizer_type == 'sgd':
-            self.optimizer = tf.train.GradientDescentOptimizer(self.learning_rate)
+            self.optimizer = tf.keras.optimizers.SGD(self.learning_rate)
         elif self.optimizer_type == 'momentum':
-            self.optimizer = tf.train.MomentumOptimizer(self.learning_rate, 0.95)
+            self.optimizer = tf.keras.optimizers.SGD(self.learning_rate, 0.95)
         elif self.optimizer_type == 'adam':
-            self.optimizer = tf.train.AdamOptimizer(self.learning_rate)
+            self.optimizer = tf.keras.optimizers.Adam(self.learning_rate)
 
         self.checkpoint_dir = 'training_checkpoints'
         if 'checkpoint_dir' in config:
@@ -167,9 +165,7 @@ class Solover:
         if not os.path.isdir(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
         self.checkpoint_prefix = os.path.join(self.checkpoint_dir, "ckpt")
-        self.checkpoint = tf.train.Checkpoint(optimizer=self.optimizer,
-                                              seq2seq=self.seq2seq,
-                                              global_step=self.step_counter)
+        self.checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, model=self.seq2seq)
 
         if self.restore_ckpt is not None and os.path.isdir(self.restore_ckpt):
             if tf.train.latest_checkpoint(self.restore_ckpt) is not None:
@@ -345,13 +341,7 @@ class Solover:
                 if data_train is None:
                     data_train = data
                 iter_count = iter_count + 1
-                img_path, norm_img, img_text, txt_index, txt_len, coord, norm_w = data_train
-                label_sparse = tf.string_split(txt_index, ',')
-                label_indices = label_sparse.indices
-                label_values = label_sparse.values
-                label_values = tf.string_to_number(label_values, out_type=tf.int32)
-                output_shape = [img_path.shape[0], self.max_padding]
-                label_dense = tf.sparse_to_dense(label_indices, output_shape, label_values, self.charset.get_eosid())
+                img_path, norm_img, img_text, label_dense, txt_len, coord, norm_w = data_train
                 logger.debug("norm_img shape: {}".format(norm_img.shape))
                 logger.debug('label_dence shape:'.format(label_dense.shape))
                 logger.debug("img_text:{} {}".format(type(img_text), img_text))
@@ -366,10 +356,11 @@ class Solover:
                         self.calc_seqacc(label_dense, outputs, True)
 
                 appgrd_time0 = time_func()
-                variables = self.seq2seq.variables
-                gradients = tape.gradient(self.loss_value, variables)
-                self.optimizer.apply_gradients(zip(gradients, variables),
-                                               global_step=self.step_counter)
+                trainable_variables = self.seq2seq.trainable_variables
+                #for var in trainable_variables:
+                #    print(var.name)
+                gradients = tape.gradient(self.loss_value, trainable_variables)
+                self.optimizer.apply_gradients(zip(gradients, trainable_variables))
                 appgrd_time1 = time_func()
                 logger.info("appgrad time consume: {}".format(appgrd_time1 - appgrd_time0))
 
@@ -379,8 +370,6 @@ class Solover:
                 if iter_count % self.save_interval == 0:
                     self.checkpoint.save(file_prefix=self.checkpoint_prefix)
 
-                read_time0 = time_func()
-
     def test(self):
         total_cnt = 0.0000001
         total_cor = 0.0000000
@@ -388,16 +377,9 @@ class Solover:
         for batch, data in enumerate(self.eval_dataset):
             try:
                 iter_count = iter_count + 1
-                img_path, norm_img, img_text, txt_index, txt_len, coord, norm_w = data
-                label_sparse = tf.string_split(txt_index, ',')
-                label_indices = label_sparse.indices
-                label_values = label_sparse.values
-                label_values = tf.string_to_number(label_values, out_type=tf.int32)
-                output_shape = [img_path.shape[0], self.max_padding]
-                label_dense = tf.sparse_to_dense(label_indices, output_shape, label_values, self.charset.get_eosid())
-
+                img_path, norm_img, img_text, label_dense, txt_len, coord, norm_w = data
                 outputs, attentions = self.seq2seq.evaluate(norm_img, norm_w)
-                show_flag = True if iter_count%500==0 else False
+                show_flag = True if iter_count % 500 == 0 else False
                 batch_cnt, batch_cor = self.calc_seqacc(label_dense, outputs, show_flag)
                 total_cnt = total_cnt + batch_cnt
                 total_cor = total_cor + batch_cor
@@ -412,7 +394,8 @@ class Solover:
             total_cor / total_cnt, total_cor, total_cnt))
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
+
     configs = {}
     configs['train_dataset_type'] = 'tfrecord'
     configs['eval_dataset_type'] = 'tfrecord'
@@ -425,8 +408,8 @@ if __name__=='__main__':
     configs['char_dict'] = 'char_dict.lst'
     configs['model_type'] = 'attention'
 
-    configs['train_file_list'] = tf.gfile.Glob("/Users/junhuang.hj/Desktop/code_paper/code/crnn_ctc_eager/tfrecord_dir/tfrecord.list.*")
-    configs['eval_file_list'] = tf.gfile.Glob("/Users/junhuang.hj/Desktop/code_paper/code/crnn_ctc_eager/tfrecord_dir/tfrecord.list.*")
+    configs['train_file_list'] = tf.io.gfile.glob("/Users/junhuang.hj/Desktop/code_paper/code/crnn_ctc_eager/tfrecord_dir/tfrecord.list.*")
+    configs['eval_file_list'] = tf.io.gfile.glob("/Users/junhuang.hj/Desktop/code_paper/code/crnn_ctc_eager/tfrecord_dir/tfrecord.list.*")
 
     print("train_file_list:", configs['train_file_list'])
     print("eval_file_list:", configs['eval_file_list'])

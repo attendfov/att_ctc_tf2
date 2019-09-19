@@ -12,7 +12,6 @@ import logging
 import numpy as np
 import tensorflow as tf
 layers = tf.keras.layers
-tf.enable_eager_execution()
 abspath = os.path.dirname(os.path.realpath(__file__))
 abspath = os.path.abspath(abspath)
 sys.path.append(abspath)

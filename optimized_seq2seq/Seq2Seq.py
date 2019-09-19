@@ -12,7 +12,6 @@ import random
 import numpy as np
 import tensorflow as tf
 layers = tf.keras.layers
-tf.enable_eager_execution()
 
 print(tf.__version__)
 
@@ -20,7 +19,7 @@ abspath = os.path.dirname(os.path.realpath(__file__))
 abspath = os.path.abspath(abspath)
 sys.path.append(abspath)
 
-from Encoder import *
+from EncoderResnet18 import *
 from Decoder import *
 
 
@@ -39,7 +38,7 @@ class Seq2Seq(tf.keras.Model):
                  teacher_forcing_ratio=0.5):
         super(Seq2Seq, self).__init__()
 
-        self.encoder = Encoder(enc_units)
+        self.encoder = ResNet18(enc_units)
         self.decoder = Decoder(vocab_size,
                                embedding_dim,
                                SOS_ID,
@@ -139,6 +138,8 @@ if __name__=='__main__':
     training = True
 
     seq2seq_model(input_data, widths, input_label, training)
+    for var in seq2seq_model.variables:
+        print(var.name)
 
 
 
