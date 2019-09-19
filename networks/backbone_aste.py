@@ -33,11 +33,11 @@ class BackboneAste(tf.keras.Model):
                                    padding='same',
                                    name=self.name_prefix + '/conv1/backbone')
 
-        self.pool1 = tf.layers.MaxPooling2D((2, 2), (2, 2), padding='same')
-        self.pool2 = tf.layers.MaxPooling2D((2, 2), (2, 2), padding='same')
-        self.pool3 = tf.layers.MaxPooling2D((2, 2), (2, 1), padding='same')
-        self.pool4 = tf.layers.MaxPooling2D((2, 2), (2, 1), padding='same')
-        self.pool5 = tf.layers.MaxPooling2D((2, 2), (2, 1), padding='valid')
+        self.pool1 = layers.MaxPooling2D((2, 2), (2, 2), padding='same')
+        self.pool2 = layers.MaxPooling2D((2, 2), (2, 2), padding='same')
+        self.pool3 = layers.MaxPooling2D((2, 2), (2, 1), padding='same')
+        self.pool4 = layers.MaxPooling2D((2, 2), (2, 1), padding='same')
+        self.pool5 = layers.MaxPooling2D((2, 2), (2, 1), padding='valid')
 
         self.ResBlock1_1 = ResBlockASTE([32, 32], 1, 'a', self.name_prefix)
         self.ResBlock1_2 = ResBlockASTE([32, 32], 1, 'b', self.name_prefix)
