@@ -28,6 +28,15 @@ def ctc_metrics(inf_tensor, grt_tensor, label_lens, sparse_val=0, inf_sparse=Tru
     return seq_error, seq_count, char_error, char_count
 
 
+def sparse_ctc_loss(ctc_logits, ctc_labels, seq_lens, blank_index):
+    loss = tf.nn.ctc_loss(ctc_labels, ctc_logits,
+                          label_length=None,
+                          logit_length=seq_lens,
+                          logits_time_major=False,
+                          blank_index=blank_index)
+    return loss
+
+
 if __name__ == '__main__':
     a = [[1,2,3,4,5,1,1],
         [1,2,0,4,0,2,0],
