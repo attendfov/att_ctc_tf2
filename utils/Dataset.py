@@ -14,19 +14,23 @@ sys.path.append('.')
 from Charset import Charset
 
 
-def coord_augmentation(tf_coord, width, height, lefoff=15, rigoff=15, upoff=5, downoff=5):
+def coord_augmentation(tf_coord, width, height, x_ratio=0.2, y_ratio=0.4):
     xmin = tf_coord[0]
     ymin = tf_coord[1]
     xmax = tf_coord[2]
     ymax = tf_coord[3]
 
+    size = tf.maximum(1, tf.minimum(xmax-xmin, ymax-ymin))
     width = tf.cast(width, dtype=xmin.dtype)
     height = tf.cast(height, dtype=ymin.dtype)
 
-    xmin = xmin - tf.random.shuffle(tf.range(lefoff))[0]
-    ymin = ymin - tf.random.shuffle(tf.range(upoff))[0]
-    xmax = xmax + tf.random.shuffle(tf.range(rigoff))[0]
-    ymax = ymax + tf.random.shuffle(tf.range(downoff))[0]
+    x_off = tf.cast(x_ratio*tf.cast(size, tf.float32), tf.int32)
+    y_off = tf.cast(y_ratio*tf.cast(size, tf.float32), tf.int32)
+
+    xmin = xmin - tf.random.shuffle(tf.range(x_off))[0]
+    ymin = ymin - tf.random.shuffle(tf.range(y_off))[0]
+    xmax = xmax + tf.random.shuffle(tf.range(x_off))[0]
+    ymax = ymax + tf.random.shuffle(tf.range(y_off))[0]
 
     xmin = tf.minimum(tf.maximum(0, xmin), width)
     ymin = tf.minimum(tf.maximum(0, ymin), height)
@@ -125,7 +129,7 @@ def random_noise_static(image, noise_type):
         return tf.cast(image, dtype=tf.uint8)
 
     def random_uniform_noise(image):
-        noise = tf.random.uniform(tf.shape(image), minval=-6, maxval=6)
+        noise = tf.random.uniform(tf.shape(image), minval=-20, maxval=20)
         image = tf.cast(image, dtype=tf.float32) + noise
         image = tf.clip_by_value(image, 0.0, 255.0)
         return tf.cast(image, dtype=tf.uint8)
@@ -312,7 +316,7 @@ class FileDataset:
                            false_fn=lambda: orig_img)
 
         prob = tf.random.uniform([])
-        noise_flg = tf.logical_and(tf.greater(prob, 0.0), tf.equal(self.mode, 'train'))
+        noise_flg = tf.logical_and(tf.greater(prob, 0.3), tf.equal(self.mode, 'train'))
         noise_idx = tf.random.shuffle(tf.range(2))[0]
         orig_img = tf.cond(noise_flg,
                            true_fn=lambda: random_noise_static(orig_img, noise_idx),
@@ -577,7 +581,7 @@ class RecordDataset:
         orig_img = tf.reshape(img_raw, (height, width, channel))
 
         prob = tf.random.uniform([])
-        invert_flg = tf.logical_and(tf.greater(prob, 0.75), tf.equal(self.mode, 'train'))
+        invert_flg = tf.logical_and(tf.greater(prob, 0.3), tf.equal(self.mode, 'train'))
         orig_img = tf.cond(invert_flg,
                            true_fn=lambda: tf.cast(255-orig_img, dtype=tf.uint8),
                            false_fn=lambda: orig_img)
@@ -659,13 +663,15 @@ class RecordDataset:
                             filename, num_parallel_reads=self.num_parallel),
                         cycle_length=32))
 
-        if repeat != 0:
-            dataset = dataset.repeat(repeat)
         dataset = dataset.map(map_func=self.parse_example, num_parallel_calls=self.num_parallel)
         dataset = dataset.filter(self.filter)
+        dataset = dataset.apply(tf.data.experimental.ignore_errors())
         dataset = dataset.shuffle(self.BUFFER_SIZE).padded_batch(self.batch_size, padded_shapes, padding_values)
-        #dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
         dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+
+        if repeat != 0:
+            dataset = dataset.repeat(repeat)
+
         return dataset
 
     def parse_example_ctc_attention(self, serial_example):
@@ -788,7 +794,6 @@ class RecordDataset:
         return dataset
 
 
-
 def FileDatasetTestSoloModel():
     configs = {}
     configs['norm_h'] = 32
@@ -880,7 +885,7 @@ def RecordDatasetTestSoloModel():
     configs['num_parallel'] = 4
     configs['batch_size'] = 1
     configs['char_dict'] = 'char_dict.lst'
-    configs['model_type'] = 'attention'
+    configs['model_type'] = 'ctc'
     configs['mode'] = 'train'
 
     dataset = RecordDataset(configs)
@@ -888,7 +893,7 @@ def RecordDatasetTestSoloModel():
 
     for line in dataset:
         img_path, norm_img, img_text, txt_index, txt_len, coord, norm_w = line
-        norm_img = norm_img + [102.9801, 115.9465, 122.7717]
+        norm_img = norm_img*127.5 + [127.5, 127.5, 127.5]
         image = np.array(norm_img.numpy(), np.uint8)
         img_path = img_path.numpy()
         img_text = img_text.numpy()
@@ -952,8 +957,8 @@ def RecordDatasetTestJoinModel():
 if __name__ == '__main__':
     #augmentation_test(img_path)
     #FileDatasetTestSoloModel()
-    FileDatasetTestJoinModel()
-    #RecordDatasetTestSoloModel()
+    #FileDatasetTestJoinModel()
+    RecordDatasetTestSoloModel()
     #RecordDatasetTestJoinModel()
 
 
