@@ -6,7 +6,6 @@ from __future__ import print_function
 
 import os
 import sys
-import numpy as np
 import tensorflow as tf
 
 
@@ -21,12 +20,9 @@ sys.path.append(abspath)
 sys.path.append(os.path.join(abspath, '.'))
 sys.path.append(os.path.join(abspath, '../utils'))
 
+from ctc_utils import *
 from Logger import logger
 from Seq2Seq import Seq2Seq
-from ctc_utils import *
-from TensorUtils import *
-from tensor_utils import *
-
 from Charset import Charset
 from Dataset import FileDataset
 from Dataset import RecordDataset
@@ -150,7 +146,7 @@ class Solover:
         self.optimizer_type = 'adam'
         if 'optimizer_type' in config:
             self.optimizer_type = config['optimizer_type']
-        if self.optimizer_type not in ('sgd', 'momentum', 'adam'):
+        if self.optimizer_type not in ('sgd', 'momentum', 'adam', 'rmsprop', 'adadelte'):
             print("Solover Error: optimizer_type {} not in [sgd, momentum, adam]".format(self.optimizer_type))
 
         self.optimizer = tf.keras.optimizers.Adam(self.learning_rate)
@@ -258,7 +254,8 @@ if __name__ == '__main__':
     configs['model_type'] = 'ctc'
     configs['norm_h'] = 32
     configs['save_interval'] = 100
-    configs['learning_rate'] = 0.0001
+    configs['optimizer_type'] = 'adadelte'
+    configs['learning_rate'] = 0.01
     configs['expand_rate'] = 1.0
     configs['num_parallel'] = 64
     configs['batch_size'] = 32
