@@ -185,7 +185,7 @@ class Charset:
 if __name__ == '__main__':
 
     char_file = 'char_dict.lst'
-    model_type = 'attention'
+    model_type = 'ctc'
     charset = Charset(char_file, model_type, False)
 
     char_count = charset.get_size()
@@ -201,3 +201,10 @@ if __name__ == '__main__':
     string = 'ｍｎ123abc中华人民共和国'
     string = q2b_function(string)
     print("string:{}".format(string))
+    index_str = charset.get_idxstr_by_charstr(string)
+    index_lst = charset.get_idxlist_by_charstr(string)
+    index_list = [int(x) for x in index_str.split(',')]
+    char_str = charset.get_charstr_by_idxlist(index_list)
+    print(index_lst)
+    print(index_list)
+    print(char_str)
