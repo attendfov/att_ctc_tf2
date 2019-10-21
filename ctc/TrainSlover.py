@@ -102,9 +102,6 @@ class Solover:
         self.step_counter = 0
         #self.step_counter = tf.Variable(tf.constant(0), trainable=False, name='step_counter')
 
-        self.decoder_dict = {}
-        self.loss_value = 0.0
-
         self.learning_rate = 0.01
         if 'learning_rate' in config:
             self.learning_rate = float(config['learning_rate'])
