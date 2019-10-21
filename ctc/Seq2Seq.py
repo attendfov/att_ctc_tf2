@@ -18,7 +18,6 @@ sys.path.append(os.path.join(abspath, '../utils'))
 import random
 from Encoder import ResNet18
 from Decoder import Decoder
-from tensor_utils import *
 from Logger import logger
 
 
