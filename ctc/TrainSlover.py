@@ -6,7 +6,6 @@ from __future__ import print_function
 
 import os
 import sys
-import cv2
 import numpy as np
 import tensorflow as tf
 
@@ -24,6 +23,7 @@ sys.path.append(os.path.join(abspath, '../utils'))
 
 from Logger import logger
 from Seq2Seq import Seq2Seq
+from ctc_utils import *
 from TensorUtils import *
 from tensor_utils import *
 
@@ -38,11 +38,26 @@ class Solover:
         if 'restore_ckpt' in config:
             self.restore_ckpt = config['restore_ckpt']
 
-        self.eval_interval = 1000
-        self.save_interval = 10
-        self.show_interval = 100
+        self.clip_max_gradient = 3.0
+        if 'clip_max_gradient' in config:
+            self.clip_max_gradient = float(config['clip_max_gradient'])
+
+        self.clip_min_gradient = -3.0
+        if 'clip_min_gradient' in config:
+            self.clip_min_gradient = float(config['clip_min_gradient'])
+
+        self.eval_interval = 2000
+        self.save_interval = 1000
+        self.show_interval = 10
         self.train_epoch = 100
         self.max_iter = 1000000
+
+        self.train_loss = tf.keras.metrics.Mean('train_loss')
+
+        self.seq_err_cnt = tf.keras.metrics.Sum('seqerr_count')
+        self.seq_all_cnt = tf.keras.metrics.Sum('seqerr_count')
+        self.char_err_cnt = tf.keras.metrics.Sum('charerr_count')
+        self.char_all_cnt = tf.keras.metrics.Sum('charall_count')
 
         #train dataset parse
         self.train_dataset_type = config['train_dataset_type']
@@ -88,7 +103,8 @@ class Solover:
         self.char_dict = config['char_dict']
         self.model_type = config['model_type']
         self.charset = Charset(self.char_dict, self.model_type)
-        self.step_counter = tf.Variable(tf.constant(0), trainable=False, name='step_counter')
+        self.step_counter = 0
+        #self.step_counter = tf.Variable(tf.constant(0), trainable=False, name='step_counter')
 
         self.decoder_dict = {}
         self.loss_value = 0.0
@@ -127,18 +143,9 @@ class Solover:
         if 'max_iter' in config:
             self.max_iter = int(config['max_iter'])
 
-        self.max_dec_length = 20
         self.eos_id = self.charset.get_eosid()
-        self.sos_id = self.charset.get_sosid()
         self.vocab_size = self.charset.get_size()
-        self.dec_num_layers = 1
-        self.d_model = 512
-        self.dec_num_heads = 4
-        self.dec_dff = 1024
-        self.dec_rate = 0.0
-
-        self.seq2seq = Seq2Seq(vocab_size=self.vocab_size,
-                               eos_id=self.eos_id)
+        self.seq2seq = Seq2Seq(vocab_size=self.vocab_size, eos_id=self.eos_id)
 
         self.optimizer_type = 'adam'
         if 'optimizer_type' in config:
@@ -153,6 +160,10 @@ class Solover:
             self.optimizer = tf.keras.optimizers.SGD(self.learning_rate, 0.95)
         elif self.optimizer_type == 'adam':
             self.optimizer = tf.keras.optimizers.Adam(self.learning_rate)
+        elif self.optimizer_type == 'rmsprop':
+            self.optimizer = tf.keras.optimizers.RMSprop(self.learning_rate)
+        elif self.optimizer_type == 'adadelte':
+            self.optimizer = tf.keras.optimizers.Adadelta(self.learning_rate)
 
         self.checkpoint_dir = 'training_checkpoints'
         if 'checkpoint_dir' in config:
@@ -161,8 +172,7 @@ class Solover:
             os.makedirs(self.checkpoint_dir)
         self.checkpoint_prefix = os.path.join(self.checkpoint_dir, "ckpt")
         self.checkpoint = tf.train.Checkpoint(optimizer=self.optimizer,
-                                              seq2seq=self.seq2seq,
-                                              global_step=self.step_counter)
+                                              seq2seq=self.seq2seq)
 
         if self.restore_ckpt is not None and os.path.isdir(self.restore_ckpt):
             if tf.train.latest_checkpoint(self.restore_ckpt) is not None:
@@ -171,200 +181,74 @@ class Solover:
             if tf.train.latest_checkpoint(self.checkpoint_dir) is not None:
                 self.checkpoint.restore(tf.train.latest_checkpoint(self.checkpoint_dir))
 
-    def argmax_text(self, argmax_output):
-        # decoder_output: tensor --> batch x steps
-        assert(isinstance(argmax_output, np.ndarray))
-        batch = argmax_output.shape[0]
-        argmax_texts = []
-        for b_id in range(batch):
-            ids = []
-            for id in argmax_output[b_id]:
-                if int(id) == self.sos_id:
-                    continue
-                if int(id) == self.eos_id:
-                    break
-                ids.append(int(id))
-            argmax_texts.append(self.charset.get_charstr_by_idxlist(ids))
-        return argmax_texts
-
-    def decoder_text(self, decoder_output, is_argmax=False):
-        # decoder_output: tensor --> batch x steps if is_argmax is True
-        # decoder_output: tensor --> batch x steps x vocb_size if is_argmax is False
-        batch = int(decoder_output.shape[0])
-        if is_argmax:
-            decoder_argmax = decoder_output
-        else:
-            decoder_argmax = tf.argmax(decoder_output, axis=-1, output_type=tf.int32)
-
-        decoder_argmax = decoder_argmax.numpy()
-        infer_texts = self.argmax_text(decoder_argmax)
-        return infer_texts
-
-
-    def ctc_seqacc(self, label_input, decoder_output, show_flag=False):
-        #label_input: sparse_tensor
-        #decoder_output: dense tensor
-        batch = tf.shape(decoder_output)[0]
-        label_dense = tf.sparse_to_dense(label_input.indices,
-                                         [batch, self.vocab_size-1],
-                                         label_input.values,
-                                         default_value=self.eos_id)
-
-        decoder_argmax = tf.argmax(decoder_output, axis=-1, output_type=tf.int32)
-        decoder_softmax = decoder_output
-
-        label_input = label_dense.numpy()
-        decoder_argmax = decoder_argmax.numpy()
-        decoder_softmax = decoder_softmax.numpy()
-
-        label_ids = []
-        for b_id in range(batch):
-            ids = []
-            for id in label_input[b_id]:
-                if int(id) == self.sos_id:
-                    continue
-                if int(id) == self.eos_id:
-                    break
-                ids.append(int(id))
-            label_ids.append(self.charset.get_charstr_by_idxlist(ids))
-
-        infer_ids = []
-        infer_pbs = []
-        for b in range(batch):
-            b_infer_id = decoder_argmax[b]
-            b_infer_pb = decoder_softmax[b]
-            pre_id = b_infer_id[0]
-            pre_pb = b_infer_pb[0][pre_id]
-
-            ids = []
-            pbs = []
-            if pre_id != self.eos_id:
-                ids.append(pre_id)
-                pbs.append(pre_pb)
-
-            for index, cur_id in enumerate(b_infer_id[1:], 1):
-                cur_pb = b_infer_pb[index][cur_id]
-                if cur_id == self.eos_id:
-                    pre_id = cur_id
-                    pre_pb = cur_pb
-                    continue
-
-                if cur_id == pre_id and cur_pb < pre_pb:
-                    pbs[-1] = cur_pb
-                    pre_id = cur_id
-                    pre_pb = cur_pb
-                    continue
-
-                if cur_id != pre_id:
-                    ids.append(cur_id)
-                    pbs.append(cur_pb)
-                    pre_id = cur_id
-                    pre_pb = cur_pb
-                    continue
-
-            if len(ids) > 0:
-                infer_ids.append(self.charset.get_charstr_by_idxlist(ids))
-                infer_pbs.append(min(pbs))
-            else:
-                infer_ids.append('')
-                infer_pbs.append(0.0)
-
-        batch_cnt = 0.0
-        batch_cor = 0.0
-        for label, infer in zip(label_ids, infer_ids):
-            batch_cnt = batch_cnt + 1
-            if label == infer:
-                batch_cor = batch_cor + 1
-
-        if show_flag:
-            for label, infer in zip(label_ids, infer_ids):
-                logger.info("ctc_seqacc label: {:^32}, infer: {:^32}".format(label, infer))
-
-            logger.info("ctc_seqacc corr_rate: {:^32}, corr count: {:^32}, batch count: {:^32}".format(
-                batch_cor/batch_cnt, batch_cor, batch_cnt))
-
-        return batch_cnt, batch_cor
-
     def train(self, training=True):
         iter_count = 0
         for epoch in range(self.train_epoch):
             logger.info("run epoch {}".format(epoch))
-            data_train = None
             for batch, data in enumerate(self.train_dataset):
                 try:
-                    if data_train is None:
-                        data_train = data
                     iter_count = iter_count + 1
                     img_path, norm_img, img_text, dense_label, label_len, coord, norm_w = data
-                    print("dense_label", dense_label.shape)
-                    ctc_sparse_label = dense_to_sparse(dense_label, self.eos_id)
-
-                    logger.debug("norm_img shape: {}".format(norm_img.shape))
-                    logger.debug("norm_img texts: {}".format(img_text.numpy()))
-                    logger.debug("ctc_idx: {}".format(dense_label.numpy()))
-                    logger.debug("ctc_len: {}".format(label_len.numpy()))
-                    logger.debug('ctc_lbl shape: {}'.format(ctc_sparse_label.shape))
-                    print("label_len：", label_len)
                     with tf.GradientTape() as tape:
-                        ctc_output, loss = self.seq2seq(norm_img,
-                                                        norm_w,
-                                                        ctc_sparse_label,
-                                                        training)
+                        ctc_features, ctc_output, step_widths = self.seq2seq(norm_img, norm_w, training)
+                        ctc_loss = tf.nn.ctc_loss(labels=dense_label, logits=ctc_output,
+                                                  label_length=label_len, logit_length=step_widths,
+                                                  logits_time_major=False, blank_index=self.eos_id)
+                        ctc_loss = tf.reduce_mean(ctc_loss)
+                        self.train_loss.update_state(ctc_loss)
 
-                        logger.info("loss: {}".format(loss))
+                        if iter_count % self.eval_interval == 0:
+                            self.test()
 
-                        if iter_count % 100 == 0:
-                            self.ctc_seqacc(ctc_sparse_label, ctc_output, True)
+                        if iter_count % self.show_interval == 0:
+                            logger.info("train loss: {}".format(self.train_loss.result().numpy()))
 
                     variables = self.seq2seq.trainable_variables
-                    gradients = tape.gradient(loss, variables)
-                    self.optimizer.apply_gradients(zip(gradients, variables))
-                    self.step_counter.assign_add(1)
+                    gradients = tape.gradient(ctc_loss, variables)
+                    for idx, gradient in enumerate(gradients):
+                        gradients[idx] = tf.clip_by_value(gradient, self.clip_min_gradient, self.clip_max_gradient)
 
-                    #self.test()
+                    self.optimizer.apply_gradients(zip(gradients, variables))
+                    self.step_counter = self.step_counter + 1
 
                     if iter_count % self.save_interval == 0:
-                        self.checkpoint.save(file_prefix=self.checkpoint_prefix)
+                        self.test()
+                        seq_err_cnt = self.seq_err_cnt.result().numpy()
+                        seq_all_cnt = self.seq_all_cnt.result().numpy()
+                        char_err_cnt = self.char_err_cnt.result().numpy()
+                        char_all_cnt = self.char_all_cnt.result().numpy()
+
+                        seq_acc = str(round(1.0 - seq_err_cnt / seq_all_cnt, 4))
+                        char_acc = str(round(1.0 - char_err_cnt / char_all_cnt, 4))
+                        model_acc_str = '-'.join(['seqacc', seq_acc, 'characc', char_acc])
+                        checkpoint_prefix = '-'.join([self.checkpoint_prefix, str(iter_count), model_acc_str])
+                        self.checkpoint.save(file_prefix=checkpoint_prefix)
                 except Exception as e:
                     print("Exception:", str(e))
 
     def test(self):
-        att_total_cnt = 0.0000001
-        att_total_cor = 0.0000000
-        ctc_total_cnt = 0.0000001
-        ctc_total_cor = 0.0000000
+        self.seq_err_cnt.reset_states()
+        self.seq_all_cnt.reset_states()
+        self.char_err_cnt.reset_states()
+        self.char_all_cnt.reset_states()
 
-        iter_count = 0
-        for batch, data in enumerate(self.eval_dataset):
-            print("run test batch {}".format(batch))
+        for iter_cnt, data in enumerate(self.eval_dataset):
             try:
-                iter_count = iter_count + 1
                 img_path, norm_img, img_text, dense_label, label_len, coord, norm_w = data
-                ctc_sparse_label = dense_to_sparse(dense_label, self.eos_id)
-
-                ctc_output, ctc_argmax = self.seq2seq.ctc_evaluate(norm_img, input_widths=norm_w)
-                show_flag = False
-                if iter_count % 4 == 0:
-                    show_flag = True
-
-                ctc_batch_cnt, ctc_batch_cor = self.ctc_seqacc(ctc_sparse_label, ctc_output, show_flag)
-                ctc_total_cnt = ctc_total_cnt + ctc_batch_cnt
-                ctc_total_cor = ctc_total_cor + ctc_batch_cor
-
-                if iter_count % 100 == 0:
-                    logger.info("att test batch index:{}, corr_rate:{}, total_cor:{}, total_cnt:{}".format(
-                        batch, att_total_cor/att_total_cnt, att_total_cor, att_total_cnt))
-
-                    logger.info("ctc test batch index:{}, corr_rate:{}, total_cor:{}, total_cnt:{}".format(
-                        batch, ctc_total_cor/ctc_total_cnt, ctc_total_cor, ctc_total_cnt))
-
+                ctc_features, ctc_output, step_widths = self.seq2seq(norm_img, norm_w, False)
+                decoded, sum_logits = tf.nn.ctc_greedy_decoder(tf.transpose(ctc_output, perm=[1, 0, 2]), step_widths)
+                seq_error, seq_count, char_error, char_count = ctc_metrics(decoded[0],
+                                                                           dense_label,
+                                                                           label_len,
+                                                                           sparse_val=self.eos_id,
+                                                                           inf_sparse=True,
+                                                                           grt_sparse=False)
+                self.seq_err_cnt.update_state(seq_error)
+                self.seq_all_cnt.update_state(seq_count)
+                self.char_err_cnt.update_state(char_error)
+                self.char_all_cnt.update_state(char_count)
             except Exception as e:
                 logger.info("test exception:{}".format(e))
-
-        logger.info("att test evalutation: corr_rate:{}, total_cor:{}, total_cnt:{}".format(
-            att_total_cor / att_total_cnt, att_total_cor, att_total_cnt))
-        logger.info("ctc test evalutation: corr_rate:{}, total_cor:{}, total_cnt:{}".format(
-            ctc_total_cor / ctc_total_cnt, ctc_total_cor, ctc_total_cnt))
 
 
 if __name__ == '__main__':
@@ -378,6 +262,9 @@ if __name__ == '__main__':
     configs['expand_rate'] = 1.0
     configs['num_parallel'] = 64
     configs['batch_size'] = 32
+    configs['clip_max_gradient'] = 1.0
+    configs['clip_min_gradient'] = -1.0
+
     configs['char_dict'] = '../seq2seq/char_dict.lst'
 
     configs['train_file_list'] = tf.io.gfile.glob("/Users/junhuang.hj/Desktop/code_paper/code/crnn_ctc_eager/tfrecord_dir/tfrecord.list.*")
@@ -387,7 +274,6 @@ if __name__ == '__main__':
     print("eval_file_list:", configs['eval_file_list'])
     slv_class = Solover(configs)
     slv_class.train()
-    ttf_file = '/Users/junhuang.hj/Desktop/code_paper/code/data_gene/fonts/chinas/simhei.ttf'
-    #slv_class.visualize_tfrecord(ttf_file, encoder_feats_height=2)
+
 
 

@@ -1,94 +1,228 @@
 # _*_ coding:utf-8 _*_
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-# Import TensorFlow >= 1.10 and enable eager execution
-import re
-import os
-import sys
-import time
-import logging
-import numpy as np
 import tensorflow as tf
+
 layers = tf.keras.layers
-abspath = os.path.dirname(os.path.realpath(__file__))
-abspath = os.path.abspath(abspath)
-sys.path.append(abspath)
-sys.path.append(os.path.join(abspath, '../utils'))
-sys.path.append(os.path.join(abspath, '../networks'))
-
-from Logger import logger
-from backbone_aste import BackboneAste
 
 
-class EncoderAste(tf.keras.Model):
-    def __init__(self,
-                 rnn_type='gru',
-                 rnn_unit=256,
-                 name_prefix='EncoderAste'):
+class IdentityBlock(tf.keras.Model):
+  def __init__(self, kernel_size, filters, stage, block, data_format):
+    super(IdentityBlock, self).__init__(name='')
+    filters1, filters2 = filters
 
-        super(EncoderAste, self).__init__(name=name_prefix)
-        self.rnn_type = rnn_type
-        self.rnn_unit = rnn_unit
-        self.backbone = BackboneAste(name_prefix)
-        rnn_class = single_cell_class(rnn_type)
+    conv_name_base = 'res' + str(stage) + block + '_branch'
+    bn_name_base = 'bn' + str(stage) + block + '_branch'
+    bn_axis = 1 if data_format == 'channels_first' else 3
 
-        rnn_fw_name = 'encode_rnn_fw0/backbone'
-        rnn_bw_name = 'encode_rnn_bw0/backbone'
-        self.rnn_fw0 = rnn_class(num_units=rnn_unit, dtype=tf.float32, name=rnn_fw_name)
-        self.rnn_bw0 = rnn_class(num_units=rnn_unit, dtype=tf.float32, name=rnn_bw_name)
+    self.conv2a = layers.Conv2D(filters1,
+                                (3, 3),
+                                padding='same',
+                                name=conv_name_base + '2a',
+                                data_format=data_format)
+    self.bn2a = layers.BatchNormalization(axis=bn_axis, name=bn_name_base + '2a')
 
-        rnn_fw_name = 'encode_rnn_fw1/backbone'
-        rnn_bw_name = 'encode_rnn_bw1/backbone'
-        self.rnn_fw1 = rnn_class(num_units=rnn_unit, dtype=tf.float32, name=rnn_fw_name)
-        self.rnn_bw1 = rnn_class(num_units=rnn_unit, dtype=tf.float32, name=rnn_bw_name)
+    self.conv2b = layers.Conv2D(filters2,
+                                kernel_size,
+                                padding='same',
+                                data_format=data_format,
+                                name=conv_name_base + '2b')
+    self.bn2b = layers.BatchNormalization(axis=bn_axis, name=bn_name_base + '2b')
 
-    def call(self, inputs, widths, training):
-        bone_features, valid_widths = self.backbone(inputs, widths, training)
-        lstm_features = tf.transpose(bone_features, perm=(0, 2, 1, 3))
-        logger.info("bone feature output B*H*W*C shape: {}".format(bone_features.shape))
-        logger.info("bone feature output B*W*H*C shape: {}".format(lstm_features.shape))
-        features_s = tf.shape(lstm_features)
-        features_b = features_s[0]
-        features_w = features_s[1]
-        features_h = features_s[2]
-        features_c = features_s[3]
-        lstm_features = tf.reshape(lstm_features, [features_b, features_w, features_h*features_c])
-        logger.info("lstm feature input B*W*C shape: {}".format(lstm_features.shape))
-        lstm_features, status = bidirectional_rnn_foreward(lstm_features, self.rnn_fw0, self.rnn_bw0)
-        lstm_features, status = bidirectional_rnn_foreward(lstm_features, self.rnn_fw1, self.rnn_bw1)
-        logger.info("lstm output B*W*C shape: {}".format(lstm_features.shape))
+  def call(self, input_tensor, training=False):
+    x = self.conv2a(input_tensor)
+    x = self.bn2a(x, training=training)
+    x = tf.nn.relu(x)
 
-        '''
-        weight_mask = None
-        if widths is not None:
-            widths = tf.reshape(widths, [-1, 1], name='seq_len')
-            widths = tf.concat([widths for h in range(features_h)], axis=-1)
-            widths = tf.reshape(widths, [-1])
-            weight_mask = tf.sequence_mask(widths, features_w, dtype=tf.float32)
-            weight_mask = tf.reshape(weight_mask, [features_b, features_h * features_w])
-            logger.debug("weight mask shape: {}".format(weight_mask.shape))
-        '''
+    x = self.conv2b(x)
+    x = self.bn2b(x, training=training)
 
-        return bone_features, lstm_features, valid_widths
+    x += input_tensor
+    return tf.nn.relu(x)
+
+
+class ConvBlock(tf.keras.Model):
+  def __init__(self,
+               kernel_size,
+               filters,
+               stage,
+               block,
+               data_format,
+               strides=(2, 2)):
+    super(ConvBlock, self).__init__(name='')
+    filters1, filters2 = filters
+
+    conv_name_base = 'res' + str(stage) + block + '_branch'
+    bn_name_base = 'bn' + str(stage) + block + '_branch'
+    bn_axis = 1 if data_format == 'channels_first' else 3
+
+    self.conv2a = layers.Conv2D(filters1, (3, 3),
+                                strides=strides,
+                                padding='same',
+                                name=conv_name_base + '2a',
+                                data_format=data_format)
+    self.bn2a = layers.BatchNormalization(axis=bn_axis, name=bn_name_base + '2a')
+
+    self.conv2b = layers.Conv2D(filters2,
+                                kernel_size,
+                                padding='same',
+                                name=conv_name_base + '2b',
+                                data_format=data_format)
+    self.bn2b = layers.BatchNormalization(axis=bn_axis, name=bn_name_base + '2b')
+
+    self.conv_shortcut = layers.Conv2D(filters2,
+                                       (1, 1),
+                                       padding='same',
+                                       strides=strides,
+                                       name=conv_name_base + '1',
+                                       data_format=data_format)
+    self.bn_shortcut = layers.BatchNormalization(axis=bn_axis, name=bn_name_base + '1')
+
+  def call(self, input_tensor, training=False):
+    x = self.conv2a(input_tensor)
+    x = self.bn2a(x, training=training)
+    x = tf.nn.relu(x)
+
+    x = self.conv2b(x)
+    x = self.bn2b(x, training=training)
+
+    shortcut = self.conv_shortcut(input_tensor)
+    shortcut = self.bn_shortcut(shortcut, training=training)
+
+    x += shortcut
+    return tf.nn.relu(x)
+
+
+class ResNet18(tf.keras.Model):
+  def __init__(self,
+               lstm_unit=128,
+               lstm_layers=2,
+               data_format='channels_last',
+               name='ResNet18'):
+    super(ResNet18, self).__init__(name=name)
+
+    valid_channel_values = ('channels_first', 'channels_last')
+    if data_format not in valid_channel_values:
+      raise ValueError('Unknown data_format: %s. Valid values: %s' %
+                       (data_format, valid_channel_values))
+    self.name_prefix = name
+    self.data_format = data_format
+
+    self.conv1 = layers.Conv2D(
+        64, (3, 3),
+        data_format=data_format,
+        padding='same',
+        name='conv1')
+    bn_axis = 1 if data_format == 'channels_first' else 3
+    self.bn_conv1 = layers.BatchNormalization(axis=bn_axis, name='bn_conv1')
+
+    self.l2a = ConvBlock(3, [48, 48], stage=2, block='a', strides=(2, 2), data_format=self.data_format)
+    self.l2b = IdentityBlock(3, [48, 48], stage=2, block='b', data_format=self.data_format)
+    self.l2_dropout = layers.Dropout(0.1)
+
+    self.l3a = ConvBlock(3, [96, 96], stage=3, block='a', strides=(2, 2), data_format=self.data_format)
+    self.l3b = IdentityBlock(3, [96, 96], stage=3, block='b', data_format=self.data_format)
+    self.l3_dropout = layers.Dropout(0.1)
+
+    self.l4a = ConvBlock(3, [192, 192], stage=4, block='a', strides=(2, 2), data_format=self.data_format)
+    self.l4b = IdentityBlock(3, [192, 192], stage=4, block='b', data_format=self.data_format)
+    self.l4_dropout = layers.Dropout(0.1)
+
+    self.l5a = ConvBlock(3, [384, 384], stage=5, block='a', strides=(2, 1), data_format=self.data_format)
+    self.l5b = IdentityBlock(3, [384, 384], stage=5, block='b', data_format=self.data_format)
+    self.l5_dropout = layers.Dropout(0.1)
+
+    rnn_type = 'lstm'
+    assert (rnn_type in ('rnn', 'lstm', 'gru'))
+    if rnn_type == 'rnn':
+        backward0 = layers.SimpleRNN(units=lstm_unit, return_sequences=True, go_backwards=True,  name='encode_fore0')
+        foreward0 = layers.SimpleRNN(units=lstm_unit, return_sequences=True, go_backwards=False, name='encode_back0')
+        backward1 = layers.SimpleRNN(units=lstm_unit, return_sequences=True, go_backwards=True, name='encode_fore1')
+        foreward1 = layers.SimpleRNN(units=lstm_unit, return_sequences=True, go_backwards=False, name='encode_back1')
+        self.bilstm0 = tf.keras.layers.Bidirectional(layer=foreward0, backward_layer=backward0, name='bilstm0')
+        self.bilstm1 = tf.keras.layers.Bidirectional(layer=foreward1, backward_layer=backward1, name='bilstm1')
+
+    elif rnn_type == 'lstm':
+        backward0 = layers.LSTM(units=lstm_unit, return_sequences=True, go_backwards=True, name='encode_fore0')
+        foreward0 = layers.LSTM(units=lstm_unit, return_sequences=True, go_backwards=False, name='encode_back0')
+        backward1 = layers.LSTM(units=lstm_unit, return_sequences=True, go_backwards=True, name='encode_fore1')
+        foreward1 = layers.LSTM(units=lstm_unit, return_sequences=True, go_backwards=False, name='encode_back1')
+        self.bilstm0 = tf.keras.layers.Bidirectional(layer=foreward0, backward_layer=backward0, name='bilstm0')
+        self.bilstm1 = tf.keras.layers.Bidirectional(layer=foreward1, backward_layer=backward1, name='bilstm1')
+    elif rnn_type == 'gru':
+        backward0 = layers.GRU(units=lstm_unit, return_sequences=True, go_backwards=True, name='encode_fore0')
+        foreward0 = layers.GRU(units=lstm_unit, return_sequences=True, go_backwards=False, name='encode_back0')
+        backward1 = layers.GRU(units=lstm_unit, return_sequences=True, go_backwards=True, name='encode_fore1')
+        foreward1 = layers.GRU(units=lstm_unit, return_sequences=True, go_backwards=False, name='encode_back1')
+        self.bilstm0 = tf.keras.layers.Bidirectional(layer=foreward0, backward_layer=backward0, name='bilstm0')
+        self.bilstm1 = tf.keras.layers.Bidirectional(layer=foreward1, backward_layer=backward1, name='bilstm1')
+
+  def get_feature_step(self, width):
+    width = tf.cast(width, dtype=tf.float32)
+    after_conv1 = width-0.0
+    after_block1 = tf.cast(tf.math.ceil(after_conv1 / 2.0), dtype=tf.float32)
+    after_block2 = tf.cast(tf.math.ceil(after_block1 / 2.0), dtype=tf.float32)
+    after_block4 = tf.cast(tf.math.ceil(after_block2 / 2.0), dtype=tf.float32)
+    after_maxpool = after_block4 - 0.0
+    return tf.cast(after_maxpool, tf.int32)
+
+  def call(self, inputs, widths, training=True):
+    x = self.conv1(inputs)
+    x = self.bn_conv1(x, training=training)
+    x = tf.nn.relu(x)
+
+    x = self.l2a(x, training=training)
+    x = self.l2b(x, training=training)
+    x = self.l2_dropout(x, training=training)
+
+    x = self.l3a(x, training=training)
+    x = self.l3b(x, training=training)
+    x = self.l3_dropout(x, training=training)
+
+    x = self.l4a(x, training=training)
+    x = self.l4b(x, training=training)
+    x = self.l4_dropout(x, training=training)
+
+    x = self.l5a(x, training=training)
+    x = self.l5b(x, training=training)
+    x = self.l5_dropout(x, training=training)
+
+
+    # BHWC-->BWHC
+    cnn_features = x
+    features = tf.transpose(x, perm=(0, 2, 1, 3))
+    features_s = tf.shape(features)
+    features_b = features_s[0]
+    features_w = features_s[1]
+    features_h = features_s[2]
+    features_c = features_s[3]
+    features = tf.reshape(features, [features_b, features_w, features_h * features_c])
+    features = self.bilstm0(features)
+    rnn_features = self.bilstm1(features)
+    widths = self.get_feature_step(widths)
+    return cnn_features, rnn_features, widths
+
+
+def check_seqlen():
+  import numpy as np
+  imgh = 48
+  imgc = 3
+  lstm_units=12
+  model = ResNet18(lstm_units)
+  for imgw in range(imgh, 3000):
+    image = np.random.random((1, imgh, imgw, imgc))
+    image = tf.convert_to_tensor(image, dtype=tf.float32)
+    print('img shape:', image.shape)
+    features, state, width = model(image, [imgw])
+    print(type(state))
+    b, w, c = features.numpy().shape
+    assert(w == width.numpy()[0])
+    print(imgw, features.numpy().shape, width.numpy())
+    print(model.variables)
 
 
 if __name__ == '__main__':
-    tf.enable_eager_execution()
-    import numpy as np
-    data = np.random.random((4, 48, 64, 3))
-    widths = [16, 32, 48, 64]
-    data = tf.convert_to_tensor(data, dtype=tf.float32)
-    ecnoder = EncoderAste()
-    bone_features, lstm_features, valid_widths = ecnoder(data, widths, True)
-    variables = ecnoder.variables
-    print("bone_features shape: {}".format(bone_features.shape))
-    print("lstm_features shape: {}".format(lstm_features.shape))
-    print("valid_widths  shape: {}".format(valid_widths.shape))
-    print("orig_width:", widths)
-    print("vald_width:", valid_widths.numpy())
-
-    for var in variables:
-        print(var.name, type(var), var.shape)
-
+    check_seqlen()

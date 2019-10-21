@@ -16,34 +16,31 @@ sys.path.append(abspath)
 sys.path.append(os.path.join(abspath, '../utils'))
 
 import random
-from EncoderResnet18 import ResNet18
-from CtcDecoder import CTCDecoder
+from Encoder import ResNet18
+from Decoder import Decoder
 from tensor_utils import *
 from Logger import logger
 
 
 class Seq2Seq(tf.keras.Model):
     def __init__(self, vocab_size, eos_id=1):
-
         super(Seq2Seq, self).__init__()
         self.vocab_size = vocab_size
         self.eos_id = eos_id
         self.encoder = ResNet18(128)
-        self.ctc_decoder = CTCDecoder(vocab_size=self.vocab_size, num_layers=0, name='ctc_layer2')
+        self.decoder = Decoder(vocab_size=self.vocab_size, num_layers=0, name='ctc_layer2')
 
     def call(self, input_tensor, input_widths, training):
-        bone_features, lstm_features, valid_widths = self.encoder(input_tensor, input_widths, training)
-        ctc_features, ctc_final_output = self.ctc_decoder(lstm_features, training)
-        return ctc_features, ctc_final_output, valid_widths
+        cnn_features, rnn_features, step_widths = self.encoder(input_tensor, input_widths, training)
+        ctc_features, ctc_output = self.decoder(rnn_features, training)
+        return ctc_features, ctc_output, step_widths
 
 
 if __name__ == '__main__':
 
     eos_id = 1
     vocab_size = 8
-
     seq2seq = Seq2Seq(vocab_size=vocab_size, eos_id=eos_id)
-
     training = True
     batch_size = 4
     image_width = 256
@@ -69,7 +66,7 @@ if __name__ == '__main__':
 
     traget_sparse = tf.SparseTensor(indices=ctc_indices, values=ctc_values, dense_shape=[batch_size, min(ctc_lengs)])
 
-    ctc_final_output, loss_value = seq2seq(data, widths, traget_sparse, training)
-    print("ctc_final_output shape {}, {}".format(ctc_final_output.shape, loss_value))
+    ctc_features, ctc_output, step_widths = seq2seq(data, widths, training)
+    print("ctc_final_output shape {}, {}, {}".format(ctc_output.shape, ctc_features.shape, step_widths))
 
 
