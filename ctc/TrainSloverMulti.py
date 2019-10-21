@@ -111,26 +111,22 @@ class Solover:
         if 'learning_rate' in config:
             self.learning_rate = float(config['learning_rate'])
 
-        self.learning_rate_decay = None
-        if 'learning_rate_decay' in config:
-            self.learning_rate_decay = config['learning_rate_decay']
+        lr_decay_steps = 200000
+        lr_decay_rate = 0.96
+        if 'lr_decay_steps' in configs:
+            lr_decay_steps = int(configs['lr_decay_steps'])
+        if 'lr_decay_rate' in configs:
+            lr_decay_rate = float(configs['lr_decay_rate'])
 
-        if self.learning_rate_decay == 'piecewise_constant':
-            boundaries = [30000, 60000]
-            values = [self.learning_rate, self.learning_rate*0.5, self.learning_rate*0.2]
-            self.learning_rate = tf.train.piecewise_constant(self.step_counter, boundaries, values)
-        elif self.learning_rate_decay == 'exponential_decay':
-            decay_rate = 0.8
-            decay_steps = 40000
-            self.learning_rate = tf.train.exponential_decay(self.learning_rate,
-                                                            self.step_counter,
-                                                            decay_steps,
-                                                            decay_rate)
-        elif self.learning_rate_decay == 'linear_cosine_decay':
-            decay_steps = 30000
-            self.learning_rate = tf.train.linear_cosine_decay(self.learning_rate,
-                                                              self.step_counter,
-                                                              decay_steps)
+        self.schedules_type = 'ExponentialDecay'
+        if self.schedules_type == 'ExponentialDecay':
+            self.learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(self.learning_rate,
+                                                                                lr_decay_steps,
+                                                                                lr_decay_rate)
+        elif self.schedules_type == 'InverseTimeDecay':
+            self.learning_rate = tf.keras.optimizers.schedules.InverseTimeDecay(self.learning_rate,
+                                                                                lr_decay_steps,
+                                                                                lr_decay_rate)
 
         if 'eval_interval' in config:
             self.eval_interval = int(config['eval_interval'])
@@ -267,6 +263,13 @@ if __name__ == '__main__':
     configs['model_type'] = 'ctc'
     configs['norm_h'] = 32
     configs['save_interval'] = 100
+    configs['save_interval'] = 100
+    configs['schedules_type'] = 'ExponentialDecay'
+    configs['lr_decay_steps'] = 200000
+    configs['lr_decay_rate'] = 0.96
+    # configs['schedules_type'] = 'InverseTimeDecay'
+    # configs['lr_decay_steps'] = 100000
+    # configs['lr_decay_rate'] = 0.5
     configs['optimizer_type'] = 'adadelte'
     configs['learning_rate'] = 0.01
     configs['expand_rate'] = 1.0
